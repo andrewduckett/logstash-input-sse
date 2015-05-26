@@ -3,41 +3,43 @@ require "logstash/inputs/base"
 require "logstash/namespace"
 require 'celluloid/eventsource'
 
+
 class LogStash::Inputs::Sse < LogStash::Inputs::Base
   config_name "sse"
 
-  # If undefined, Logstash will complain, even if codec is unused.
+  # The default code is JSON
   default :codec, "json" 
 
-  # The message string to use in the event.
-  config :url, :validate => :string, :default => "127.0.0.1:10001/v1/stats/stream"
+  # Set the url from where to consume the SSE stream
+  config :url, :validate => :string, :required => true
+  # Specifies the event type to pick out of the stream. The default is "event: metric"
   config :event_type, :validate => :string, :default => "metric"
 
 
   public
   def register
-    @event_source = Celluloid::EventSource.new("http://" + @url)
+
   end 
 
-  def run(queue)
+  def run(input_queue)
 
+    @event_source = Celluloid::EventSource.new(@url) do |conn|
 
-      @event_source.on_open do
-        puts "Connection opened"
-      end
+        conn.on_open do
+          @logger.info("New server sent events input: #{@url}")
+        end
 
-      @event_source.on(@event_type.to_sym) do |event|
-        puts "Message: #{event.data}"
-        event = LogStash::Event.new("message" => @message)
-        decorate(event)
-        queue << event
-      end
+       conn.on(@event_type.to_sym) do |payload|
+          @codec.decode(payload.data) do |event|
+          decorate(event)
+          input_queue << event
+          end
+        end
 
-      @event_source.on_error do |message|
-        puts "Response status #{message[:status_code]}, Response body #{message[:body]}"
-      end
-
+        conn.on_error do |message|
+          @logger.error("Response status #{message[:status_code]}, Response body #{message[:body]}")
+        end
     end
-  end 
-
+    sleep 
+  end
 end 
